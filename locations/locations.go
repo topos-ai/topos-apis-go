@@ -41,6 +41,23 @@ func NewClient(addr string, secure bool) (*Client, error) {
 	return c, nil
 }
 
+func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude, longitude float64) ([]string, error) {
+	req := &locations.LocateRegionsRequest{
+		RegionType: regionType,
+		Location: &locations.LatLng{
+			Latitude:  latitude,
+			Longitude: longitude,
+		},
+	}
+
+	response, err := c.locationsClient.LocateRegions(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return response.Regions, nil
+}
+
 func (c *Client) GetRegionGeometry(ctx context.Context, name string) (*s2.Polygon, error) {
 	req := &locations.GetRegionGeometryRequest{
 		Name: name,
