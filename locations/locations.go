@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"math"
 
 	"github.com/golang/geo/s2"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
+	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -90,4 +92,89 @@ func (c *Client) GetRegionGeometry(ctx context.Context, name string) (*s2.Polygo
 	}
 
 	return polygon, nil
+}
+
+type RegionIterator struct {
+	items    []string
+	pageInfo *iterator.PageInfo
+	nextFunc func() error
+}
+
+// PageInfo supports pagination. See the google.golang.org/api/iterator package
+// for details.
+func (it *RegionIterator) PageInfo() *iterator.PageInfo {
+	return it.pageInfo
+}
+
+// Next returns the next result. Its second return value is iterator.Done if
+// there are no more results. Once Next returns Done, all subsequent calls will
+// return Done.
+func (it *RegionIterator) Next() (string, error) {
+	var item string
+	if err := it.nextFunc(); err != nil {
+		return item, err
+	}
+
+	item = it.items[0]
+	it.items = it.items[1:]
+	return item, nil
+}
+
+func (it *RegionIterator) bufLen() int {
+	return len(it.items)
+}
+
+func (it *RegionIterator) takeBuf() interface{} {
+	b := it.items
+	it.items = nil
+	return b
+}
+
+type SearchRegionOption func(*locations.SearchRegionsRequest)
+
+func SearchRegionsByRegionType(regionType string) SearchRegionOption {
+	return func(req *locations.SearchRegionsRequest) {
+		req.RegionType = regionType
+	}
+}
+
+func SearchRegionsByIncludingRegion(name string) SearchRegionOption {
+	return func(req *locations.SearchRegionsRequest) {
+		req.IncludedByRegion = name
+	}
+}
+
+func (c *Client) SearchRegions(ctx context.Context, options ...SearchRegionOption) (*RegionIterator, error) {
+	it := &RegionIterator{}
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		req := &locations.SearchRegionsRequest{
+			PageToken:       pageToken,
+			ExcludeGeometry: true,
+		}
+
+		for _, option := range options {
+			option(req)
+		}
+
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+
+		response, err := c.locationsClient.SearchRegions(ctx, req)
+		if err != nil {
+			return "", err
+		}
+
+		for _, region := range response.Regions {
+			it.items = append(it.items, region.Name)
+		}
+
+		return response.NextPageToken, nil
+	}
+
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = 1024
+	return it, nil
 }
