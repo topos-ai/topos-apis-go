@@ -167,7 +167,7 @@ func (c *Client) SearchIDs(ctx context.Context, keyValuePairs [][2]string, polyg
 	return it, nil
 }
 
-func (c *Client) CountIDs(ctx context.Context, key string, polygon *s2.Polygon) (map[string]int64, error) {
+func (c *Client) CountIDs(ctx context.Context, polygon *s2.Polygon, key string, values ...string) (map[string]int64, error) {
 	polygonBuffer := bytes.NewBuffer([]byte{})
 	if err := polygon.Encode(polygonBuffer); err != nil {
 		return nil, err
@@ -181,6 +181,7 @@ func (c *Client) CountIDs(ctx context.Context, key string, polygon *s2.Polygon) 
 
 	req := &topiary.CountIDsRequest{
 		Key:           key,
+		Values:        values,
 		PolygonLength: int64(len(polygonBytes)),
 	}
 
