@@ -3,7 +3,6 @@ package locations
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"io"
 	"math"
 
@@ -11,7 +10,8 @@ import (
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
+
+	"github.com/topos-ai/topos-apis-go/auth"
 )
 
 type Client struct {
@@ -20,15 +20,7 @@ type Client struct {
 }
 
 func NewClient(addr string, secure bool) (*Client, error) {
-	dialOptions := []grpc.DialOption{}
-	if secure {
-		dialOptions = append(dialOptions, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			MinVersion: tls.VersionTLS12,
-		})))
-	} else {
-		dialOptions = append(dialOptions, grpc.WithInsecure())
-	}
-
+	dialOptions := auth.DialOptions(secure)
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {
 		return nil, err
