@@ -3,11 +3,14 @@ package locations
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 
 	"github.com/golang/geo/s2"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
+	geom "github.com/twpayne/go-geom"
+	geojson "github.com/twpayne/go-geom/encoding/geojson"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 
@@ -169,4 +172,54 @@ func (c *Client) SearchRegions(ctx context.Context, options ...SearchRegionOptio
 	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
 	it.pageInfo.MaxSize = 1024
 	return it, nil
+}
+
+type IntersectingRegion struct {
+	Name string
+	Area float64
+}
+
+func (c *Client) IntersectRegions(ctx context.Context, regionType string, geometry geom.T) ([]*IntersectingRegion, error) {
+	encodedGeometry, err := geojson.Marshal(geometry)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := c.locationsClient.IntersectRegions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	req := &locations.IntersectRegionsRequest{
+		RegionType:       regionType,
+		GeometryEncoding: locations.GeometryEncoding_GEOJSON,
+	}
+
+	for chunk := encodedGeometry; chunk != nil; {
+		if len(chunk) > 1024 {
+			req.GeometryChunk = chunk[:1024]
+			chunk = chunk[1024:]
+		} else {
+			req.GeometryChunk = chunk
+			chunk = nil
+		}
+
+		if err := client.Send(req); err != nil {
+			return nil, err
+		}
+
+		*req = locations.IntersectRegionsRequest{}
+	}
+
+	response, err := client.CloseAndRecv()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, e := range response.IntersectingRegions {
+		fmt.Println(e)
+	}
+
+	return nil, nil
+
 }
