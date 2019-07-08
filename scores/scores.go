@@ -36,26 +36,26 @@ type Score struct {
 	Score   float64 `json:"score"`
 }
 
-func (c *Client) BatchSetScore(ctx context.Context, batch []*Score) error {
-	req := &scores.BatchSetScoreRequest{
+func (c *Client) BatchSetGraphScores(ctx context.Context, name string, batch []*Score) error {
+	req := &scores.BatchSetGraphScoresRequest{
+		Name:   name,
 		Scores: make([]*scores.Score, len(batch)),
 	}
 
 	for i, score := range batch {
 		req.Scores[i] = &scores.Score{
-			Name:    score.Name,
 			VertexA: score.VertexA,
 			VertexB: score.VertexB,
 			Score:   score.Score,
 		}
 	}
 
-	_, err := c.scoresClient.BatchSetScore(ctx, req)
+	_, err := c.scoresClient.BatchSetGraphScores(ctx, req)
 	return err
 }
 
-func (c *Client) TopScores(ctx context.Context, name, vertexA string, pageSize int) ([]*Score, error) {
-	req := &scores.TopScoresRequest{
+func (c *Client) TopGraphScores(ctx context.Context, name, vertexA string, pageSize int) ([]*Score, error) {
+	req := &scores.TopGraphScoresRequest{
 		Name:    name,
 		VertexA: vertexA,
 	}
@@ -66,7 +66,7 @@ func (c *Client) TopScores(ctx context.Context, name, vertexA string, pageSize i
 		req.PageSize = int32(pageSize)
 	}
 
-	response, err := c.scoresClient.TopScores(ctx, req)
+	response, err := c.scoresClient.TopGraphScores(ctx, req)
 	if err != nil {
 		return nil, err
 	}
