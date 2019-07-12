@@ -36,7 +36,7 @@ type Score struct {
 	Score   float64 `json:"score"`
 }
 
-func (c *Client) SetGraphScores(ctx context.Context, name string, score *Score) error {
+func (c *Client) SetGraphScore(ctx context.Context, name string, score *Score) error {
 	req := &scores.SetGraphScoreRequest{
 		Name: name,
 		Score: &scores.Score{
