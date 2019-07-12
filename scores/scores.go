@@ -36,6 +36,20 @@ type Score struct {
 	Score   float64 `json:"score"`
 }
 
+func (c *Client) SetGraphScores(ctx context.Context, name string, score *Score) error {
+	req := &scores.SetGraphScoreRequest{
+		Name: name,
+		Score: &scores.Score{
+			VertexA: score.VertexA,
+			VertexB: score.VertexB,
+			Score:   score.Score,
+		},
+	}
+
+	_, err := c.scoresClient.SetGraphScore(ctx, req)
+	return err
+}
+
 func (c *Client) BatchSetGraphScores(ctx context.Context, name string, batch []*Score) error {
 	req := &scores.BatchSetGraphScoresRequest{
 		Name:   name,

@@ -162,6 +162,12 @@ func (c *Client) SearchRegions(ctx context.Context, options ...SearchRegionOptio
 			return "", err
 		}
 
+		if len(response.Regions) > cap(it.items)-len(it.items) {
+			items := make([]string, len(it.items), len(it.items)+len(response.Regions))
+			copy(items, it.items)
+			it.items = items
+		}
+
 		for _, region := range response.Regions {
 			it.items = append(it.items, region.Name)
 		}
