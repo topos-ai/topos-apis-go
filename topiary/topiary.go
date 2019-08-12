@@ -125,11 +125,6 @@ func (c *Client) SearchIDs(ctx context.Context, keyValuePairs [][2]string, polyg
 			req.PageSize = int32(pageSize)
 		}
 
-		if err := client.Send(req); err != nil {
-			return "", err
-		}
-
-		*req = topiary.SearchIDsRequest{}
 		for chunk := polygonBytes; chunk != nil; {
 			if len(chunk) > 1024 {
 				req.PolygonChunk = chunk[:1024]
@@ -142,6 +137,8 @@ func (c *Client) SearchIDs(ctx context.Context, keyValuePairs [][2]string, polyg
 			if err := client.Send(req); err != nil {
 				return "", err
 			}
+
+			*req = topiary.SearchIDsRequest{}
 		}
 
 		response, err := client.CloseAndRecv()
@@ -175,11 +172,6 @@ func (c *Client) CountIDs(ctx context.Context, polygon *s2.Polygon, key string, 
 		Values: values,
 	}
 
-	if err := client.Send(req); err != nil {
-		return nil, err
-	}
-
-	*req = topiary.CountIDsRequest{}
 	for chunk := polygonBytes; chunk != nil; {
 		if len(chunk) > 1024 {
 			req.PolygonChunk = chunk[:1024]
@@ -192,6 +184,8 @@ func (c *Client) CountIDs(ctx context.Context, polygon *s2.Polygon, key string, 
 		if err := client.Send(req); err != nil {
 			return nil, err
 		}
+
+		*req = topiary.CountIDsRequest{}
 	}
 
 	response, err := client.CloseAndRecv()
