@@ -2,6 +2,7 @@ package scores
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/topos-ai/topos-apis/genproto/go/topos/scores/v1"
@@ -68,11 +69,15 @@ func (c *Client) BatchSetGraphScores(ctx context.Context, name string, batch []*
 	return err
 }
 
-func (c *Client) TopGraphScores(ctx context.Context, name, vertexA string, pageSize int) ([]*Score, error) {
+func (c *Client) TopGraphScores(ctx context.Context, name, vertexA, vertexB string, pageSize int) ([]*Score, error) {
 	req := &scores.TopGraphScoresRequest{
-		Name:    name,
-		VertexA: vertexA,
+		Name:           name,
+		VertexA:        vertexA,
+		VertexB:        vertexB,
+		AscendingOrder: true,
 	}
+
+	fmt.Println(req)
 
 	if pageSize > int(math.MaxInt32) {
 		req.PageSize = math.MaxInt32
@@ -88,6 +93,7 @@ func (c *Client) TopGraphScores(ctx context.Context, name, vertexA string, pageS
 	topScores := make([]*Score, len(response.Scores))
 	for i, score := range response.Scores {
 		topScores[i] = &Score{
+			VertexA: score.VertexA,
 			VertexB: score.VertexB,
 			Score:   score.Score,
 		}

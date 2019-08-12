@@ -117,7 +117,6 @@ func (c *Client) SearchIDs(ctx context.Context, keyValuePairs [][2]string, polyg
 		req := &topiary.SearchIDsRequest{
 			PageToken:     pageToken,
 			KeyValuePairs: topiaryKeyValuePairs,
-			PolygonLength: int64(len(polygonBytes)),
 		}
 
 		if pageSize > math.MaxInt32 {
@@ -172,9 +171,8 @@ func (c *Client) CountIDs(ctx context.Context, polygon *s2.Polygon, key string, 
 	}
 
 	req := &topiary.CountIDsRequest{
-		Key:           key,
-		Values:        values,
-		PolygonLength: int64(len(polygonBytes)),
+		Key:    key,
+		Values: values,
 	}
 
 	if err := client.Send(req); err != nil {
