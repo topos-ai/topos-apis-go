@@ -91,7 +91,7 @@ func (a *perRPCCredentials) RequireTransportSecurity() bool {
 	return true
 }
 
-func DialOptions(secure bool) []grpc.DialOption {
+func DialOptions(secure, insecureSkipVerify bool) []grpc.DialOption {
 	if !secure {
 		return []grpc.DialOption{
 			grpc.WithInsecure(),
@@ -101,7 +101,8 @@ func DialOptions(secure bool) []grpc.DialOption {
 	return []grpc.DialOption{
 		grpc.WithPerRPCCredentials(newPerRPCCredentials()),
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			MinVersion: tls.VersionTLS12,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: insecureSkipVerify,
 		})),
 	}
 }

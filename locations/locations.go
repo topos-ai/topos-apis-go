@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/golang/geo/s2"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
@@ -23,7 +24,7 @@ type Client struct {
 }
 
 func NewClient(addr string, secure bool) (*Client, error) {
-	dialOptions := auth.DialOptions(secure)
+	dialOptions := auth.DialOptions(secure, !strings.Contains(addr, "."))
 	conn, err := grpc.Dial(addr, dialOptions...)
 	if err != nil {
 		return nil, err
