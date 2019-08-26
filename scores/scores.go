@@ -2,7 +2,6 @@ package scores
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 
@@ -32,53 +31,33 @@ func NewClient(addr string, secure bool) (*Client, error) {
 	return c, nil
 }
 
-type Score struct {
-	VertexA string  `json:"vertex_a,omitempty"`
-	VertexB string  `json:"vertex_b,omitempty"`
-	Score   float64 `json:"score"`
-}
-
-func (c *Client) SetGraphScore(ctx context.Context, name string, score *Score) error {
+func (c *Client) SetGraphScore(ctx context.Context, name string, score *scores.Score) error {
 	req := &scores.SetGraphScoreRequest{
-		Name: name,
-		Score: &scores.Score{
-			VertexA: score.VertexA,
-			VertexB: score.VertexB,
-			Score:   score.Score,
-		},
+		Name:  name,
+		Score: score,
 	}
 
 	_, err := c.scoresClient.SetGraphScore(ctx, req)
 	return err
 }
 
-func (c *Client) BatchSetGraphScores(ctx context.Context, name string, batch []*Score) error {
+func (c *Client) BatchSetGraphScores(ctx context.Context, name string, batch []*scores.Score) error {
 	req := &scores.BatchSetGraphScoresRequest{
 		Name:   name,
-		Scores: make([]*scores.Score, len(batch)),
-	}
-
-	for i, score := range batch {
-		req.Scores[i] = &scores.Score{
-			VertexA: score.VertexA,
-			VertexB: score.VertexB,
-			Score:   score.Score,
-		}
+		Scores: batch,
 	}
 
 	_, err := c.scoresClient.BatchSetGraphScores(ctx, req)
 	return err
 }
 
-func (c *Client) TopGraphScores(ctx context.Context, name, vertexA, vertexB string, pageSize int) ([]*Score, error) {
+func (c *Client) TopGraphScores(ctx context.Context, name, vertexA, vertexB string, pageSize int) ([]*scores.Score, error) {
 	req := &scores.TopGraphScoresRequest{
 		Name:           name,
 		VertexA:        vertexA,
 		VertexB:        vertexB,
-		AscendingOrder: true,
+		AscendingOrder: false,
 	}
-
-	fmt.Println(req)
 
 	if pageSize > int(math.MaxInt32) {
 		req.PageSize = math.MaxInt32
@@ -91,16 +70,7 @@ func (c *Client) TopGraphScores(ctx context.Context, name, vertexA, vertexB stri
 		return nil, err
 	}
 
-	topScores := make([]*Score, len(response.Scores))
-	for i, score := range response.Scores {
-		topScores[i] = &Score{
-			VertexA: score.VertexA,
-			VertexB: score.VertexB,
-			Score:   score.Score,
-		}
-	}
-
-	return topScores, nil
+	return response.Scores, nil
 }
 
 func (c *Client) ListGraphScores(ctx context.Context, name, vertexA string) (*ScoreIterator, error) {
@@ -122,18 +92,10 @@ func (c *Client) ListGraphScores(ctx context.Context, name, vertexA string) (*Sc
 			return "", err
 		}
 
-		if len(response.Scores) > cap(it.items)-len(it.items) {
-			items := make([]*Score, len(it.items), len(it.items)+len(response.Scores))
-			copy(items, it.items)
-			it.items = items
-		}
-
-		for _, score := range response.Scores {
-			it.items = append(it.items, &Score{
-				VertexA: score.VertexA,
-				VertexB: score.VertexB,
-				Score:   score.Score,
-			})
+		if it.items == nil {
+			it.items = response.Scores
+		} else {
+			it.items = append(it.items, response.Scores...)
 		}
 
 		return response.NextPageToken, nil
@@ -145,7 +107,7 @@ func (c *Client) ListGraphScores(ctx context.Context, name, vertexA string) (*Sc
 }
 
 type ScoreIterator struct {
-	items    []*Score
+	items    []*scores.Score
 	pageInfo *iterator.PageInfo
 	nextFunc func() error
 }
@@ -159,8 +121,8 @@ func (it *ScoreIterator) PageInfo() *iterator.PageInfo {
 // Next returns the next result. Its second return value is iterator.Done if
 // there are no more results. Once Next returns Done, all subsequent calls will
 // return Done.
-func (it *ScoreIterator) Next() (*Score, error) {
-	var item *Score
+func (it *ScoreIterator) Next() (*scores.Score, error) {
+	var item *scores.Score
 	if err := it.nextFunc(); err != nil {
 		return item, err
 	}
