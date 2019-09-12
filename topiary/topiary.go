@@ -196,3 +196,17 @@ func (c *Client) CountIDs(ctx context.Context, polygon *s2.Polygon, key string, 
 
 	return response.ValueCounts, nil
 }
+
+func (c *Client) IDKeyValues(ctx context.Context, id []byte, key string) ([]string, error) {
+	req := &topiary.GetIDKeyValuesRequest{
+		Id:  id,
+		Key: key,
+	}
+
+	response, err := c.topiaryClient.GetIDKeyValues(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return response.Values, nil
+}
