@@ -37,12 +37,12 @@ func NewClient(addr string, secure bool) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) CreatePoint(ctx context.Context, p *points.Point) (*points.Point, error) {
-	req := &points.CreatePointRequest{
+func (c *Client) SetPoint(ctx context.Context, p *points.Point) (*points.Point, error) {
+	req := &points.SetPointRequest{
 		Point: p,
 	}
 
-	return c.pointsClient.CreatePoint(ctx, req)
+	return c.pointsClient.SetPoint(ctx, req)
 }
 
 func (c *Client) Brand(ctx context.Context, name string) (*points.Brand, error) {
@@ -199,4 +199,18 @@ func (it *PointIterator) takeBuf() interface{} {
 	b := it.items
 	it.items = nil
 	return b
+}
+
+func (c *Client) CountPoints(ctx context.Context, tags []string, regionName string) (map[string]int64, error) {
+	req := &points.CountTagPointsRequest{
+		Tags:   tags,
+		Region: regionName,
+	}
+
+	response, err := c.pointsClient.CountTagPoints(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return response.TagPoints, nil
 }
