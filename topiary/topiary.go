@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/golang/geo/s1"
 	"github.com/golang/geo/s2"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/topiary/v1"
 	"google.golang.org/api/iterator"
@@ -143,6 +144,44 @@ func (c *Client) SearchIDs(ctx context.Context, keyValuePairs [][2]string, polyg
 		}
 
 		response, err := client.CloseAndRecv()
+		if err != nil {
+			return "", err
+		}
+
+		it.items = append(it.items, response.Ids...)
+		return response.NextPageToken, nil
+	}
+
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = 1024
+	return it, nil
+}
+
+func (c *Client) SearchIDsWithinRadius(ctx context.Context, keyValuePairs [][2]string, center s2.CellID, radius s1.Angle) (*IDIterator, error) {
+	topiaryKeyValuePairs := make([]*topiary.KeyValuePair, len(keyValuePairs))
+	for i, keyValuePair := range keyValuePairs {
+		topiaryKeyValuePairs[i] = &topiary.KeyValuePair{
+			Key:   keyValuePair[0],
+			Value: keyValuePair[1],
+		}
+	}
+
+	it := &IDIterator{}
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		req := &topiary.SearchIDsWithinRadiusRequest{
+			PageToken:     pageToken,
+			KeyValuePairs: topiaryKeyValuePairs,
+			Center:        uint64(center),
+			Radius:        radius.Radians(),
+		}
+
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+
+		response, err := c.topiaryClient.SearchIDsWithinRadius(ctx, req)
 		if err != nil {
 			return "", err
 		}
