@@ -249,3 +249,16 @@ func (c *Client) IDKeyValues(ctx context.Context, id []byte, key string) ([]stri
 
 	return response.Values, nil
 }
+
+func (c *Client) IDPosition(ctx context.Context, id []byte) (s2.CellID, error) {
+	req := &topiary.GetIDPositionRequest{
+		Id: id,
+	}
+
+	response, err := c.topiaryClient.GetIDPosition(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+
+	return s2.CellID(response.Position), nil
+}
