@@ -262,3 +262,12 @@ func (c *Client) IDPosition(ctx context.Context, id []byte) (s2.CellID, error) {
 
 	return s2.CellID(response.Position), nil
 }
+
+func (c *Client) DeleteID(ctx context.Context, id []byte) error {
+	req := &topiary.DeleteIDRequest{
+		Id: id,
+	}
+
+	_, err := c.topiaryClient.DeleteID(ctx, req)
+	return err
+}
