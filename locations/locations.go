@@ -39,6 +39,36 @@ func NewClient(addr string, secure bool) (*Client, error) {
 	return c, nil
 }
 
+func (c *Client) RegionGeometry(ctx context.Context, region string) (*s2.Polygon, error) {
+	req := &locations.GetRegionGeometryRequest{
+		Name: region,
+	}
+
+	client, err := c.locationsClient.GetRegionGeometry(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	polygonBuffer := bytes.NewBuffer([]byte{})
+	for {
+		response, err := client.Recv()
+		if err == io.EOF {
+			break
+		}
+
+		if _, err := polygonBuffer.Write(response.PolygonChunk); err != nil {
+			return nil, err
+		}
+	}
+
+	polygon := &s2.Polygon{}
+	if err := polygon.Decode(polygonBuffer); err != nil {
+		return nil, err
+	}
+
+	return polygon, nil
+}
+
 func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude, longitude float64) ([]string, error) {
 	req := &locations.LocateRegionsRequest{
 		RegionType: regionType,
@@ -88,6 +118,37 @@ func (c *Client) GetRegionGeometry(ctx context.Context, name string) (*s2.Polygo
 	}
 
 	return polygon, nil
+}
+
+func (c *Client) SetRegionGeometryGeoJSON(ctx context.Context, name string, geojsonString []byte) error {
+	client, err := c.locationsClient.SetRegionGeometry(ctx)
+	if err != nil {
+		return err
+	}
+
+	req := &locations.SetRegionGeometryRequest{
+		Name:             name,
+		GeometryEncoding: locations.GeometryEncoding_GEOJSON,
+	}
+
+	for geojsonString != nil {
+		if len(geojsonString) <= 1024 {
+			req.GeometryChunk = geojsonString
+			geojsonString = nil
+		} else {
+			req.GeometryChunk = geojsonString[:1024]
+			geojsonString = geojsonString[1024:]
+		}
+
+		if err := client.Send(req); err != nil {
+			return err
+		}
+
+		req.Reset()
+	}
+
+	_, err = client.CloseAndRecv()
+	return err
 }
 
 type RegionIterator struct {
