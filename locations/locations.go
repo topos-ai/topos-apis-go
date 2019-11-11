@@ -120,6 +120,15 @@ func (c *Client) GetRegionGeometry(ctx context.Context, name string) (*s2.Polygo
 	return polygon, nil
 }
 
+func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error {
+	req := &locations.SetRegionRequest{
+		Region: region,
+	}
+
+	_, err := c.locationsClient.SetRegion(ctx, req)
+	return err
+}
+
 func (c *Client) SetRegionGeometryGeoJSON(ctx context.Context, name string, geojsonString []byte) error {
 	client, err := c.locationsClient.SetRegionGeometry(ctx)
 	if err != nil {
