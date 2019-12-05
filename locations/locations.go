@@ -1,21 +1,18 @@
 package locations
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"io"
 	"math"
 	"strings"
 
-	"github.com/golang/geo/s2"
+	geometryproto "github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
 	geom "github.com/twpayne/go-geom"
-	geojson "github.com/twpayne/go-geom/encoding/geojson"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 
 	"github.com/topos-ai/topos-apis-go/auth"
+	"github.com/topos-ai/topos-apis-go/geometry"
 )
 
 type Client struct {
@@ -39,9 +36,10 @@ func NewClient(addr string, secure bool) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) RegionGeometry(ctx context.Context, region string) (*s2.Polygon, error) {
+func (c *Client) RegionGeometry(ctx context.Context, region string) (geom.T, error) {
 	req := &locations.GetRegionGeometryRequest{
-		Name: region,
+		Name:             region,
+		GeometryEncoding: geometryproto.Encoding_WKB,
 	}
 
 	client, err := c.locationsClient.GetRegionGeometry(ctx, req)
@@ -49,24 +47,19 @@ func (c *Client) RegionGeometry(ctx context.Context, region string) (*s2.Polygon
 		return nil, err
 	}
 
-	polygonBuffer := bytes.NewBuffer([]byte{})
-	for {
-		response, err := client.Recv()
-		if err == io.EOF {
-			break
-		}
-
-		if _, err := polygonBuffer.Write(response.PolygonChunk); err != nil {
-			return nil, err
-		}
-	}
-
-	polygon := &s2.Polygon{}
-	if err := polygon.Decode(polygonBuffer); err != nil {
+	response, err := client.Recv()
+	if err != nil {
 		return nil, err
 	}
 
-	return polygon, nil
+	return geometry.RecvGeometry(geometryproto.Encoding_WKB, response.GeometryChunk, func() ([]byte, error) {
+		response, err := client.Recv()
+		if err != nil {
+			return nil, err
+		}
+
+		return response.GeometryChunk, nil
+	})
 }
 
 func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude, longitude float64) ([]string, error) {
@@ -86,40 +79,6 @@ func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude,
 	return response.Regions, nil
 }
 
-func (c *Client) GetRegionGeometry(ctx context.Context, name string) (*s2.Polygon, error) {
-	req := &locations.GetRegionGeometryRequest{
-		Name: name,
-	}
-
-	client, err := c.locationsClient.GetRegionGeometry(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	buffer := bytes.NewBuffer(make([]byte, 0, 1024))
-	for {
-		response, err := client.Recv()
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if _, err := buffer.Write(response.PolygonChunk); err != nil {
-			return nil, err
-		}
-	}
-
-	polygon := &s2.Polygon{}
-	if err := polygon.Decode(buffer); err != nil {
-		return nil, err
-	}
-
-	return polygon, nil
-}
-
 func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error {
 	req := &locations.SetRegionRequest{
 		Region: region,
@@ -129,7 +88,7 @@ func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error 
 	return err
 }
 
-func (c *Client) SetRegionGeometryGeoJSON(ctx context.Context, name string, geojsonString []byte) error {
+func (c *Client) SetRegionGeometry(ctx context.Context, name string, geometryObject geom.T) error {
 	client, err := c.locationsClient.SetRegionGeometry(ctx)
 	if err != nil {
 		return err
@@ -137,27 +96,22 @@ func (c *Client) SetRegionGeometryGeoJSON(ctx context.Context, name string, geoj
 
 	req := &locations.SetRegionGeometryRequest{
 		Name:             name,
-		GeometryEncoding: locations.GeometryEncoding_GEOJSON,
+		GeometryEncoding: geometryproto.Encoding_WKB,
 	}
 
-	for geojsonString != nil {
-		if len(geojsonString) <= 1024 {
-			req.GeometryChunk = geojsonString
-			geojsonString = nil
-		} else {
-			req.GeometryChunk = geojsonString[:1024]
-			geojsonString = geojsonString[1024:]
-		}
-
+	if err := geometry.SendGeometry(geometryproto.Encoding_WKB, geometryObject, func(chunk []byte) error {
+		req.GeometryChunk = chunk
 		if err := client.Send(req); err != nil {
 			return err
 		}
 
-		req.Reset()
+		*req = locations.SetRegionGeometryRequest{}
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	_, err = client.CloseAndRecv()
-	return err
+	return client.CloseSend()
 }
 
 type RegionIterator struct {
@@ -256,12 +210,7 @@ type IntersectingRegion struct {
 	Area float64
 }
 
-func (c *Client) IntersectRegions(ctx context.Context, regionType string, geometry geom.T) ([]*IntersectingRegion, error) {
-	encodedGeometry, err := geojson.Marshal(geometry)
-	if err != nil {
-		return nil, err
-	}
-
+func (c *Client) IntersectRegions(ctx context.Context, regionType string, geometryObject geom.T) ([]*IntersectingRegion, error) {
 	client, err := c.locationsClient.IntersectRegions(ctx)
 	if err != nil {
 		return nil, err
@@ -269,23 +218,19 @@ func (c *Client) IntersectRegions(ctx context.Context, regionType string, geomet
 
 	req := &locations.IntersectRegionsRequest{
 		RegionType:       regionType,
-		GeometryEncoding: locations.GeometryEncoding_GEOJSON,
+		GeometryEncoding: geometryproto.Encoding_WKB,
 	}
 
-	for chunk := encodedGeometry; chunk != nil; {
-		if len(chunk) > 1024 {
-			req.GeometryChunk = chunk[:1024]
-			chunk = chunk[1024:]
-		} else {
-			req.GeometryChunk = chunk
-			chunk = nil
-		}
-
+	if err := geometry.SendGeometry(geometryproto.Encoding_WKB, geometryObject, func(chunk []byte) error {
+		req.GeometryChunk = chunk
 		if err := client.Send(req); err != nil {
-			return nil, err
+			return err
 		}
 
 		*req = locations.IntersectRegionsRequest{}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	response, err := client.CloseAndRecv()
@@ -293,10 +238,13 @@ func (c *Client) IntersectRegions(ctx context.Context, regionType string, geomet
 		return nil, err
 	}
 
-	for _, e := range response.IntersectingRegions {
-		fmt.Println(e)
+	intersectingRegions := make([]*IntersectingRegion, len(response.IntersectingRegions))
+	for i, intersectingRegion := range response.IntersectingRegions {
+		intersectingRegions[i] = &IntersectingRegion{
+			Name: intersectingRegion.Name,
+			Area: intersectingRegion.RegionArea,
+		}
 	}
 
-	return nil, nil
-
+	return intersectingRegions, nil
 }

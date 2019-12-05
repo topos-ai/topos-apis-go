@@ -8,13 +8,18 @@ import (
 	"os"
 	"strings"
 
-	"github.com/topos-ai/topos-apis-go/auth"
+	geometryproto "github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	points "github.com/topos-ai/topos-apis/genproto/go/topos/points/v1"
 	geom "github.com/twpayne/go-geom"
 	"github.com/twpayne/go-geom/encoding/geojson"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
+
+	"github.com/topos-ai/topos-apis-go/auth"
+	"github.com/topos-ai/topos-apis-go/geometry"
 )
+
+const earthCircomference float64 = 40075017
 
 type Client struct {
 	pointsClient points.PointsClient
@@ -65,8 +70,8 @@ func (c *Client) PolygonCountPoints(ctx context.Context, tags []string, polygon 
 	}
 
 	req := &points.PolygonCountTagPointsRequest{
-		Tags:            tags,
-		PolygonEncoding: points.PolygonEncoding_GEOJSON,
+		Tags:             tags,
+		GeometryEncoding: geometryproto.Encoding_GEOJSON,
 	}
 
 	for chunk := encodedGeometry; chunk != nil; {
@@ -94,25 +99,15 @@ func (c *Client) PolygonCountPoints(ctx context.Context, tags []string, polygon 
 	return response.TagPoints, nil
 }
 
-func (c *Client) PolygonSearchPoints(ctx context.Context, brand string, tags []string, polygon *geom.Polygon) (*PointIterator, error) {
-
-	encodedGeometry, err := geojson.Marshal(polygon)
-	if err != nil {
-		return nil, err
-	}
+func (c *Client) SearchPoints(ctx context.Context, brand string, tags []string, region string) (*PointIterator, error) {
 
 	it := &PointIterator{}
 	fetch := func(pageSize int, pageToken string) (string, error) {
-		client, err := c.pointsClient.PolygonSearchPoints(ctx)
-		if err != nil {
-			return "", err
-		}
 
-		req := &points.PolygonSearchPointsRequest{
-			Brand:           brand,
-			Tags:            tags,
-			PolygonEncoding: points.PolygonEncoding_GEOJSON,
-
+		req := &points.SearchPointsRequest{
+			Brand:     brand,
+			Tags:      tags,
+			Region:    region,
 			PageToken: pageToken,
 		}
 
@@ -122,23 +117,99 @@ func (c *Client) PolygonSearchPoints(ctx context.Context, brand string, tags []s
 			req.PageSize = int32(pageSize)
 		}
 
-		for chunk := encodedGeometry; chunk != nil; {
-			if len(chunk) > 1024 {
-				req.PolygonChunk = chunk[:1024]
-				chunk = chunk[1024:]
-			} else {
-				req.PolygonChunk = chunk
-				chunk = nil
-			}
+		response, err := c.pointsClient.SearchPoints(ctx, req)
+		if err != nil {
+			return "", err
+		}
 
+		if it.items == nil {
+			it.items = response.Points
+		} else {
+			it.items = append(it.items, response.Points...)
+		}
+
+		return response.NextPageToken, nil
+	}
+
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = 1024
+	return it, nil
+}
+
+func (c *Client) PolygonSearchPoints(ctx context.Context, brand string, tags []string, geometryObject geom.T) (*PointIterator, error) {
+
+	it := &PointIterator{}
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		client, err := c.pointsClient.PolygonSearchPoints(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		req := &points.PolygonSearchPointsRequest{
+			Brand:            brand,
+			Tags:             tags,
+			GeometryEncoding: geometryproto.Encoding_WKB,
+			PageToken:        pageToken,
+		}
+
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+
+		if err := geometry.SendGeometry(geometryproto.Encoding_WKB, geometryObject, func(chunk []byte) error {
+			req.GeometryChunk = chunk
 			if err := client.Send(req); err != nil {
-				return "", err
+				return err
 			}
 
 			*req = points.PolygonSearchPointsRequest{}
+			return nil
+		}); err != nil {
+			return "", err
 		}
 
 		response, err := client.CloseAndRecv()
+		if err != nil {
+			return "", err
+		}
+
+		if it.items == nil {
+			it.items = response.Points
+		} else {
+			it.items = append(it.items, response.Points...)
+		}
+
+		return response.NextPageToken, nil
+	}
+
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = 1024
+	return it, nil
+}
+
+func (c *Client) RadiusSearchPoints(ctx context.Context, brands []string, tags []string, latitude, longitude, radius float64) (*PointIterator, error) {
+	it := &PointIterator{}
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		req := &points.RadiusSearchPointsRequest{
+			Brands: brands,
+			Tags:   tags,
+			Center: &geometryproto.LatLng{
+				Latitude:  latitude,
+				Longitude: longitude,
+			},
+			Radius:    radius,
+			PageToken: pageToken,
+		}
+
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+
+		response, err := c.pointsClient.RadiusSearchPoints(ctx, req)
 		if err != nil {
 			return "", err
 		}
