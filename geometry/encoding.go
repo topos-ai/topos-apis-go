@@ -95,5 +95,34 @@ func SendGeometry(encoding geometry.Encoding, geometryObject geom.T, send func(c
 		chunk = chunk[1024:]
 	}
 
-	return send(chunk)
+	if len(chunk) > 0 {
+		return send(chunk)
+	}
+
+	return nil
+}
+
+func SendRawGeometry(encoding geometry.Encoding, wkbGeometry []byte, send func(chunk []byte) error) error {
+	if encoding != geometry.Encoding_WKB {
+		geometryObject, err := wkb.Unmarshal(wkbGeometry)
+		if err != nil {
+			return err
+		}
+
+		return SendGeometry(encoding, geometryObject, send)
+	}
+
+	for len(wkbGeometry) > 1024 {
+		if err := send(wkbGeometry[:1024]); err != nil {
+			return err
+		}
+
+		wkbGeometry = wkbGeometry[1024:]
+	}
+
+	if len(wkbGeometry) > 0 {
+		return send(wkbGeometry)
+	}
+
+	return nil
 }
