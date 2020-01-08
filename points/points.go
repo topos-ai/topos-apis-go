@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"strings"
 
 	geometryproto "github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	points "github.com/topos-ai/topos-apis/genproto/go/topos/points/v1"
@@ -26,9 +25,8 @@ type Client struct {
 	conn         *grpc.ClientConn
 }
 
-func NewClient(addr string, secure bool) (*Client, error) {
-	dialOptions := auth.DialOptions(secure, !strings.Contains(addr, "."))
-	conn, err := grpc.Dial(addr, dialOptions...)
+func NewClient(addr string, useLocalCredentials bool) (*Client, error) {
+	conn, err := auth.Dial(addr, useLocalCredentials)
 	if err != nil {
 		return nil, err
 	}

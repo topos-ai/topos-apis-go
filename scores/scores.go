@@ -3,11 +3,9 @@ package scores
 import (
 	"context"
 	"math"
-	"strings"
 
 	"github.com/topos-ai/topos-apis/genproto/go/topos/scores/v1"
 	"google.golang.org/api/iterator"
-	"google.golang.org/grpc"
 
 	"github.com/topos-ai/topos-apis-go/auth"
 )
@@ -16,9 +14,8 @@ type Client struct {
 	scoresClient scores.ScoresClient
 }
 
-func NewClient(addr string, secure bool) (*Client, error) {
-	dialOptions := auth.DialOptions(secure, !strings.Contains(addr, "."))
-	conn, err := grpc.Dial(addr, dialOptions...)
+func NewClient(addr string, useLocalCredentials bool) (*Client, error) {
+	conn, err := auth.Dial(addr, useLocalCredentials)
 	if err != nil {
 		return nil, err
 	}
