@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,13 +20,13 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	grpccredentials "google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
 	toposClientID     string = "tJbqmqfttOHJ0kGfy8Bvf60v8Z4pW7T4"
 	toposAudience     string = "https://endpoints.topos.com"
-	toposCallbackPort string = "3000"
+	toposCallbackPort string = "8676"
 	toposCallback     string = "http://localhost:" + toposCallbackPort + "/callback"
 )
 
@@ -164,25 +166,13 @@ func getTokenPKCE(ctx context.Context) (*getTokenResponse, error) {
 	return getToken(ctx, tokenPayload)
 }
 
-type credentials struct {
-	AccessToken        string    `json:"access_token"`
-	AccessTokenExpires time.Time `json:"access_token_expires"`
-	RefreshToken       string    `json:"refresh_token"`
-}
-
-func writeCredentialsFile(credentials *credentials) error {
-	toposDir := filepath.Join(os.Getenv("HOME"), ".topos")
-	if err := os.MkdirAll(toposDir, 0700); err != nil {
-		return err
-	}
-
-	path := filepath.Join(toposDir, "credentials.json")
+func writeString(path, s string) error {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
 
-	if err := json.NewEncoder(file).Encode(credentials); err != nil {
+	if _, err := io.WriteString(file, s); err != nil {
 		if err := file.Close(); err != nil {
 			return err
 		}
@@ -193,91 +183,149 @@ func writeCredentialsFile(credentials *credentials) error {
 	return file.Close()
 }
 
-func readCredentialsFile() (*credentials, error) {
-	path := filepath.Join(os.Getenv("HOME"), ".topos", "credentials.json")
+func readString(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	credentials := &credentials{}
-	if err := json.NewDecoder(file).Decode(credentials); err != nil {
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-
-		return nil, err
-	}
-
+	s, err := ioutil.ReadAll(file)
 	if err := file.Close(); err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return credentials, nil
+	return string(s), err
 }
 
 func Login(ctx context.Context) error {
-	response, err := getTokenPKCE(ctx)
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
 
-	return writeCredentialsFile(&credentials{
-		AccessToken:        response.AccessToken,
-		AccessTokenExpires: time.Now().Add(time.Duration(response.ExpiresIn-60) * time.Second),
-		RefreshToken:       response.RefreshToken,
-	})
+	toposDir := filepath.Join(homeDir, ".topos")
+	if err := os.MkdirAll(toposDir, 0700); err != nil {
+		return err
+	}
+
+	var accessToken string
+	refreshTokenPath := filepath.Join(toposDir, "refresh_token")
+	if refreshToken, err := readString(refreshTokenPath); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+
+		response, err := getTokenPKCE(ctx)
+		if err != nil {
+			return err
+		}
+
+		if err := writeString(refreshTokenPath, response.RefreshToken); err != nil {
+			return err
+		}
+
+		accessToken = response.AccessToken
+	} else {
+		response, err := getTokenRefresh(ctx, refreshToken)
+		if err != nil {
+			return err
+		}
+
+		accessToken = response.AccessToken
+	}
+
+	accessTokenPath := filepath.Join(toposDir, "access_token")
+	return writeString(accessTokenPath, accessToken)
 }
 
 type localCredentials struct {
-	lock        sync.Mutex
-	credentials *credentials
+	lock            sync.Mutex
+	refreshToken    string
+	accessTokenPath string
+	accessToken     string
+	expiry          int64
+}
+
+type accessTokenExp struct {
+	Exp int64 `json:"exp"`
 }
 
 func newLocalCredentials() (*localCredentials, error) {
-	credentials, err := readCredentialsFile()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 
+	toposDir := filepath.Join(homeDir, ".topos")
+	refreshTokenPath := filepath.Join(toposDir, "refresh_token")
+	refreshToken, err := readString(refreshTokenPath)
+	if err != nil {
+		return nil, err
+	}
+
+	accessTokenPath := filepath.Join(toposDir, "access_token")
+	accessToken, err := readString(accessTokenPath)
+	if err != nil {
+		return nil, err
+	}
+
+	accessTokenComponents := strings.SplitN(accessToken, ".", 3)
+	if len(accessTokenComponents) != 3 {
+		return nil, fmt.Errorf("invalid access_token")
+	}
+
+	accessTokenPayloadJSON, err := base64.RawURLEncoding.DecodeString(accessTokenComponents[1])
+	if err != nil {
+		return nil, err
+	}
+
+	exp := accessTokenExp{}
+	if err := json.Unmarshal(accessTokenPayloadJSON, &exp); err != nil {
+		return nil, err
+	}
+
 	return &localCredentials{
-		credentials: credentials,
+		refreshToken:    refreshToken,
+		accessTokenPath: accessTokenPath,
+		accessToken:     accessToken,
+		expiry:          exp.Exp,
 	}, nil
 }
 
-func (c *localCredentials) accessToken(ctx context.Context) (string, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if time.Now().Before(c.credentials.AccessTokenExpires) {
-		return c.credentials.AccessToken, nil
-	}
-
+func getTokenRefresh(ctx context.Context, refreshToken string) (*getTokenResponse, error) {
 	payload := url.Values{}
 	payload.Add("grant_type", "refresh_token")
 	payload.Add("client_id", toposClientID)
-	payload.Add("refresh_token", c.credentials.RefreshToken)
+	payload.Add("refresh_token", refreshToken)
 
-	response, err := getToken(ctx, payload)
+	return getToken(ctx, payload)
+}
+
+func (c *localCredentials) authorization(ctx context.Context) (string, error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	now := time.Now().Unix()
+	if now < c.expiry {
+		return c.accessToken, nil
+	}
+
+	response, err := getTokenRefresh(ctx, c.refreshToken)
 	if err != nil {
-		return "", nil
-	}
-
-	credentials := &credentials{
-		AccessToken:        response.AccessToken,
-		AccessTokenExpires: time.Now().Add(time.Duration(response.ExpiresIn-60) * time.Second),
-		RefreshToken:       c.credentials.RefreshToken,
-	}
-
-	if err := writeCredentialsFile(credentials); err != nil {
 		return "", err
 	}
 
-	c.credentials = credentials
-	return c.credentials.AccessToken, nil
+	if err := writeString(c.accessTokenPath, response.AccessToken); err != nil {
+		return "", err
+	}
+
+	c.accessToken = response.AccessToken
+	c.expiry = now + response.ExpiresIn
+	return c.accessToken, nil
 }
 
 func (c *localCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
-	accessToken, err := c.accessToken(ctx)
+	accessToken, err := c.authorization(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +344,7 @@ func withAddr(addr string) grpc.DialOption {
 		return grpc.WithInsecure()
 	}
 
-	return grpc.WithTransportCredentials(grpccredentials.NewTLS(&tls.Config{
+	return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: !strings.Contains(addr, "."),
 	}))
