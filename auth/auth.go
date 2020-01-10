@@ -21,6 +21,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -339,6 +340,30 @@ func (*localCredentials) RequireTransportSecurity() bool {
 	return true
 }
 
+type remoteCredentials struct{}
+
+func authorizationMetadataFromIncomingContext(ctx context.Context) []string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil
+	}
+
+	return md.Get("authorization")
+}
+
+func (remoteCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	requestMetadata := map[string]string{}
+	if authorizationMetadata := authorizationMetadataFromIncomingContext(ctx); len(authorizationMetadata) > 0 {
+		requestMetadata["authorization"] = authorizationMetadata[0]
+	}
+
+	return requestMetadata, nil
+}
+
+func (remoteCredentials) RequireTransportSecurity() bool {
+	return true
+}
+
 func withAddr(addr string) grpc.DialOption {
 	if strings.HasPrefix(addr, "localhost:") || strings.HasPrefix(addr, "127.0.0.1:") {
 		return grpc.WithInsecure()
@@ -352,7 +377,7 @@ func withAddr(addr string) grpc.DialOption {
 
 func Dial(addr string, useLocalCredentials bool) (*grpc.ClientConn, error) {
 	if !useLocalCredentials {
-		return grpc.Dial(addr, withAddr(addr))
+		return grpc.Dial(addr, withAddr(addr), grpc.WithPerRPCCredentials(remoteCredentials{}))
 	}
 
 	creds, err := newLocalCredentials()
