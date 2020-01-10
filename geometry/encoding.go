@@ -1,8 +1,10 @@
 package geometry
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"io"
 
 	"github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	geom "github.com/twpayne/go-geom"
@@ -38,4 +40,53 @@ func Unmarshal(data []byte, encoding geometry.Encoding) (geom.T, error) {
 	default:
 		return nil, status.Error(codes.InvalidArgument, "unknown geometry encoding")
 	}
+}
+
+func SendGeometry(r io.Reader, send func([]byte) error) error {
+	chunk := make([]byte, 1024)
+	for {
+		n, err := r.Read(chunk)
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		nextChunk := chunk[:n]
+		if err := send(nextChunk); err != nil {
+			return err
+		}
+	}
+}
+
+func SendGeometryBytes(data []byte, send func([]byte) error) error {
+	return SendGeometry(bytes.NewReader(data), send)
+}
+
+func RecvGeometry(w io.Writer, recv func() ([]byte, error)) error {
+	for {
+		chunk, err := recv()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if _, err := w.Write(chunk); err != nil {
+			return err
+		}
+	}
+}
+
+func RecvGeometryBytes(chunk []byte, recv func() ([]byte, error)) ([]byte, error) {
+	buffer := bytes.NewBuffer(chunk)
+	if err := RecvGeometry(buffer, recv); err != nil {
+		return nil, err
+	}
+
+	return buffer.Bytes(), nil
 }
