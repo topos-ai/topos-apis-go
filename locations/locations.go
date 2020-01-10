@@ -2,16 +2,15 @@ package locations
 
 import (
 	"context"
+	"io"
 	"math"
 
 	geometryproto "github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
-	geom "github.com/twpayne/go-geom"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 
 	"github.com/topos-ai/topos-apis-go/auth"
-	"github.com/topos-ai/topos-apis-go/geometry"
 )
 
 type Client struct {
@@ -34,30 +33,84 @@ func NewClient(addr string, useLocalCredentials bool) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) RegionGeometry(ctx context.Context, region string) (geom.T, error) {
+func (c *Client) Region(ctx context.Context, region string) (*locations.Region, error) {
+	req := &locations.GetRegionRequest{
+		Name: region,
+	}
+
+	return c.locationsClient.GetRegion(ctx, req)
+}
+
+func (c *Client) RegionGeometry(ctx context.Context, w io.Writer, region string, encoding geometryproto.Encoding) error {
 	req := &locations.GetRegionGeometryRequest{
 		Name:             region,
-		GeometryEncoding: geometryproto.Encoding_WKB,
+		GeometryEncoding: encoding,
 	}
 
 	client, err := c.locationsClient.GetRegionGeometry(ctx, req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	response, err := client.Recv()
-	if err != nil {
-		return nil, err
-	}
-
-	return geometry.RecvGeometry(geometryproto.Encoding_WKB, response.GeometryChunk, func() ([]byte, error) {
+	for {
 		response, err := client.Recv()
-		if err != nil {
-			return nil, err
+		if err == io.EOF {
+			return nil
 		}
 
-		return response.GeometryChunk, nil
-	})
+		if err != nil {
+			return err
+		}
+
+		if _, err := w.Write(response.GeometryChunk); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error {
+	req := &locations.SetRegionRequest{
+		Region: region,
+	}
+
+	_, err := c.locationsClient.SetRegion(ctx, req)
+	return err
+}
+
+func (c *Client) SetRegionGeometry(ctx context.Context, r io.Reader, name string, encoding geometryproto.Encoding) error {
+	client, err := c.locationsClient.SetRegionGeometry(ctx)
+	if err != nil {
+		return err
+	}
+
+	req := &locations.SetRegionGeometryRequest{
+		Name:             name,
+		GeometryEncoding: encoding,
+	}
+
+	for chunk := make([]byte, 1024); ; {
+		n, err := r.Read(chunk)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+
+		req.GeometryChunk = chunk[:n]
+		if err := client.Send(req); err != nil {
+			return err
+		}
+
+		if n < 1024 {
+			break
+		}
+
+		*req = locations.SetRegionGeometryRequest{}
+	}
+
+	return client.CloseSend()
 }
 
 func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude, longitude float64) ([]string, error) {
@@ -75,77 +128,6 @@ func (c *Client) LocateRegions(ctx context.Context, regionType string, latitude,
 	}
 
 	return response.Regions, nil
-}
-
-func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error {
-	req := &locations.SetRegionRequest{
-		Region: region,
-	}
-
-	_, err := c.locationsClient.SetRegion(ctx, req)
-	return err
-}
-
-func (c *Client) SetRegionGeometry(ctx context.Context, name string, geometryObject geom.T) error {
-	client, err := c.locationsClient.SetRegionGeometry(ctx)
-	if err != nil {
-		return err
-	}
-
-	req := &locations.SetRegionGeometryRequest{
-		Name:             name,
-		GeometryEncoding: geometryproto.Encoding_WKB,
-	}
-
-	if err := geometry.SendGeometry(geometryproto.Encoding_WKB, geometryObject, func(chunk []byte) error {
-		req.GeometryChunk = chunk
-		if err := client.Send(req); err != nil {
-			return err
-		}
-
-		*req = locations.SetRegionGeometryRequest{}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	return client.CloseSend()
-}
-
-type RegionIterator struct {
-	items    []string
-	pageInfo *iterator.PageInfo
-	nextFunc func() error
-}
-
-// PageInfo supports pagination. See the google.golang.org/api/iterator package
-// for details.
-func (it *RegionIterator) PageInfo() *iterator.PageInfo {
-	return it.pageInfo
-}
-
-// Next returns the next result. Its second return value is iterator.Done if
-// there are no more results. Once Next returns Done, all subsequent calls will
-// return Done.
-func (it *RegionIterator) Next() (string, error) {
-	var item string
-	if err := it.nextFunc(); err != nil {
-		return item, err
-	}
-
-	item = it.items[0]
-	it.items = it.items[1:]
-	return item, nil
-}
-
-func (it *RegionIterator) bufLen() int {
-	return len(it.items)
-}
-
-func (it *RegionIterator) takeBuf() interface{} {
-	b := it.items
-	it.items = nil
-	return b
 }
 
 type SearchRegionOption func(*locations.SearchRegionsRequest)
@@ -203,12 +185,7 @@ func (c *Client) SearchRegions(ctx context.Context, options ...SearchRegionOptio
 	return it, nil
 }
 
-type IntersectingRegion struct {
-	Name string
-	Area float64
-}
-
-func (c *Client) IntersectRegions(ctx context.Context, regionType string, geometryObject geom.T) ([]*IntersectingRegion, error) {
+func (c *Client) IntersectRegions(ctx context.Context, r io.Reader, regionType string) ([]*locations.IntersectRegionsResponse_IntersectingRegions, error) {
 	client, err := c.locationsClient.IntersectRegions(ctx)
 	if err != nil {
 		return nil, err
@@ -219,16 +196,26 @@ func (c *Client) IntersectRegions(ctx context.Context, regionType string, geomet
 		GeometryEncoding: geometryproto.Encoding_WKB,
 	}
 
-	if err := geometry.SendGeometry(geometryproto.Encoding_WKB, geometryObject, func(chunk []byte) error {
-		req.GeometryChunk = chunk
+	for chunk := make([]byte, 1024); ; {
+		n, err := r.Read(chunk)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		req.GeometryChunk = chunk[:n]
 		if err := client.Send(req); err != nil {
-			return err
+			return nil, err
+		}
+
+		if n < 1024 {
+			break
 		}
 
 		*req = locations.IntersectRegionsRequest{}
-		return nil
-	}); err != nil {
-		return nil, err
 	}
 
 	response, err := client.CloseAndRecv()
@@ -236,13 +223,41 @@ func (c *Client) IntersectRegions(ctx context.Context, regionType string, geomet
 		return nil, err
 	}
 
-	intersectingRegions := make([]*IntersectingRegion, len(response.IntersectingRegions))
-	for i, intersectingRegion := range response.IntersectingRegions {
-		intersectingRegions[i] = &IntersectingRegion{
-			Name: intersectingRegion.Name,
-			Area: intersectingRegion.RegionArea,
-		}
+	return response.IntersectingRegions, nil
+}
+
+type RegionIterator struct {
+	items    []string
+	pageInfo *iterator.PageInfo
+	nextFunc func() error
+}
+
+// PageInfo supports pagination. See the google.golang.org/api/iterator package
+// for details.
+func (it *RegionIterator) PageInfo() *iterator.PageInfo {
+	return it.pageInfo
+}
+
+// Next returns the next result. Its second return value is iterator.Done if
+// there are no more results. Once Next returns Done, all subsequent calls will
+// return Done.
+func (it *RegionIterator) Next() (string, error) {
+	var item string
+	if err := it.nextFunc(); err != nil {
+		return item, err
 	}
 
-	return intersectingRegions, nil
+	item = it.items[0]
+	it.items = it.items[1:]
+	return item, nil
+}
+
+func (it *RegionIterator) bufLen() int {
+	return len(it.items)
+}
+
+func (it *RegionIterator) takeBuf() interface{} {
+	b := it.items
+	it.items = nil
+	return b
 }
