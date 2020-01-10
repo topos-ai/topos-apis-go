@@ -1,16 +1,19 @@
 package locations
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"math"
 
 	geometryproto "github.com/topos-ai/topos-apis/genproto/go/topos/geometry"
 	"github.com/topos-ai/topos-apis/genproto/go/topos/locations/v1"
+	"github.com/twpayne/go-geom"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc"
 
 	"github.com/topos-ai/topos-apis-go/auth"
+	"github.com/topos-ai/topos-apis-go/geometry"
 )
 
 type Client struct {
@@ -66,6 +69,15 @@ func (c *Client) RegionGeometry(ctx context.Context, w io.Writer, region string,
 			return err
 		}
 	}
+}
+
+func (c *Client) RegionGeometryObject(ctx context.Context, region string) (geom.T, error) {
+	buffer := bytes.NewBuffer([]byte{})
+	if err := c.RegionGeometry(ctx, buffer, region, geometryproto.Encoding_WKB); err != nil {
+		return nil, err
+	}
+
+	return geometry.Unmarshal(buffer.Bytes(), geometryproto.Encoding_WKB)
 }
 
 func (c *Client) SetRegion(ctx context.Context, region *locations.Region) error {
